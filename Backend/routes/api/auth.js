@@ -1,0 +1,129 @@
+const router = require("express").Router();
+const { User } = require("../../models/user");
+const {Instructor} = require("../../models/instructor");
+const Token = require("../../models/token");
+const crypto = require("crypto");
+const sendEmail = require("../../utils/sendEmails");
+const bcrypt = require("bcrypt");
+const Joi = require("joi");
+const BASE_URL = "http://localhost:5000/";
+const JWT_SECRET = "mysecrttoken";
+const auth = require('../../middleware/auth');
+const instAuth = require('../../middleware/instAuth');
+
+const validate = (data) => {
+	const schema = Joi.object({
+		email: Joi.string().email().required().label("Email"),
+		password: Joi.string().required().label("Password"),
+	});
+	return schema.validate(data);
+};
+//Post Route
+//User Token / Student Token
+router.get('/', auth, async (req, res) => {
+	try {
+	  const user = await User.findById(req.user).select('-password');
+	  res.json(user);
+	} catch (err) {
+	  console.error(err.message);
+	  res.status(500).send('Server Error');
+	}
+  });
+
+
+//User Login 
+router.post("/", async (req, res) => {
+	try {
+		const { error } = validate(req.body);
+		if (error)
+			return res.status(400).send({ message: error.details[0].message });
+
+		const user = await User.findOne({ email: req.body.email });
+		if (!user)
+			return res.status(401).send({ message: "Invalid Email or Password" });
+
+		const validPassword = await bcrypt.compare(
+			req.body.password,
+			user.password
+		);
+		if (!validPassword)
+			return res.status(401).send({ message: "Invalid Email or Password" });
+
+		if (!user.verified) {
+			let token = await Token.findOne({ userId: user._id });
+			if (!token) {
+				token = await new Token({
+					type: "user",
+					userId: user._id,
+					token: crypto.randomBytes(32).toString("hex"),
+				}).save();
+        const url = `${BASE_URL}users/${user.id}/verify/${token.token}`;
+				await sendEmail(user.email, "Verify Email", url);
+			}
+
+			return res
+				.status(400)
+				.send({ message: "An Email sent to your account please verify" });
+		}
+
+		const token = user.generateAuthToken();
+		res.status(200).send({ data:{ token,userId: user._id}, message: "logged in successfully" });
+	} catch (error) {
+		res.status(500).send({ message: "Internal Server Error" });
+	}
+});
+
+
+ //Instructor Token 
+ router.get('/instAuth', instAuth, async (req, res) => {
+	try {
+	  const user = await Instructor.findById(req.instructor).select('-password');
+	  res.json(user);
+	} catch (err) {
+	  console.error(err.message);
+	  res.status(500).send('Server Error');
+	}
+  });
+
+//Instructor  Login 
+router.post("/instLogin", async (req, res) => {
+	try {
+		const { error } = validate(req.body);
+		if (error)
+			return res.status(400).send({ message: error.details[0].message });
+
+		const instructor = await Instructor.findOne({ email: req.body.email });
+		if (!instructor)
+			return res.status(401).send({ message: "Invalid Email or Password" });
+
+		const validPassword = await bcrypt.compare(
+			req.body.password,
+			instructor.password
+		);
+		if (!validPassword)
+			return res.status(401).send({ message: "Invalid Email or Password" });
+
+		if (!instructor.verified) {
+			let token = await Token.findOne({ userId: instructor._id });
+			if (!token) {
+				token = await new Token({
+					type:"instructor",
+					userId: instructor._id,
+					token: crypto.randomBytes(32).toString("hex"),
+				}).save();
+        const url = `${BASE_URL}users/${instructor.id}/verify/${token.token}`;
+				await sendEmail(instructor.email, "Verify Email", url);
+			}
+
+			return res
+				.status(400)
+				.send({ message: "An Email sent to your account please verify" });
+		}
+
+		const token = instructor.generateAuthToken();
+		res.status(200).send({ data:{ token,userId: instructor._id}, message: "logged in successfully" });
+	} catch (error) {
+		res.status(500).send({ message: "Internal Server Error" });
+	}
+});
+module.exports = router;
